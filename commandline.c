@@ -1493,7 +1493,8 @@ int app_crypt_test(int argc, const char *const *argv, struct command_line_option
 
   int len,i;
 
-  for(len=16;len<=65536;len*=2) {
+  printf("Benchmarking CryptoBox Auth-Cryption:\n");
+  for(len=16;len<=16384;len*=2) {
     time_ms_t start = gettime_ms();
     for (i=0;i<1000;i++) {
       bzero(&plain_block[0],crypto_box_curve25519xsalsa20poly1305_ZEROBYTES);
@@ -1503,6 +1504,56 @@ int app_crypt_test(int argc, const char *const *argv, struct command_line_option
     time_ms_t end = gettime_ms();
     printf("%d bytes - 100 tests took %lldms - mean time = %.2fms\n",
 	   len, (long long) end - start, (end - start) * 1.0 / i);
+  }
+
+
+  printf("Benchmarking CryptoSign signature verification:\n");
+  {
+
+    unsigned char sign_pk[crypto_sign_edwards25519sha512batch_PUBLICKEYBYTES];
+    unsigned char sign_sk[crypto_sign_edwards25519sha512batch_SECRETKEYBYTES];
+    if (crypto_sign_edwards25519sha512batch_keypair(sign_pk,sign_sk))
+      { fprintf(stderr,"crypto_sign_curve25519xsalsa20poly1305_keypair() failed.\n");
+	exit(-1); }
+
+    unsigned char plainTextIn[1024];
+    unsigned char cipherText[1024];
+    unsigned char plainTextOut[1024];
+    unsigned long long cipherLen=0;
+    unsigned long long plainLenOut;
+    bzero(plainTextIn,1024);
+    bzero(cipherText,1024);
+    snprintf((char *)&plainTextIn[0],1024,"%s","No casaba melons allowed in the lab.");
+    int plainLenIn=64;
+
+    time_ms_t start = gettime_ms();
+    for(i=0;i<10;i++) {
+    int r=crypto_sign_edwards25519sha512batch(cipherText,&cipherLen,
+					      plainTextIn,plainLenIn,
+					      sign_sk);
+    if (r) { fprintf(stderr,"crypto_sign_edwards25519sha512batch() failed.\n");
+      exit(-1); }
+    }
+
+    time_ms_t end=gettime_ms();
+    printf("mean signature generation time = %.2fms\n",
+	   (end-start)*1.0/i);
+    start = gettime_ms();
+
+    for(i=0;i<10;i++) {
+      bzero(&plainTextOut,1024); plainLenOut=0;
+      int r=crypto_sign_edwards25519sha512batch_open(plainTextOut,&plainLenOut,
+						 &cipherText[0],cipherLen,
+						 sign_pk);
+      if (r) { 
+	fprintf(stderr,"crypto_sign_edwards25519sha512batch_open() failed (r=%d, i=%d).\n",
+		r,i);
+	exit(-1);
+      }
+    }
+    end = gettime_ms();
+    printf("mean signature verification time = %.2fms\n",
+	   (end-start)*1.0/i);
   }
   return 0;
 }
