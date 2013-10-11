@@ -17,18 +17,30 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 
-
-#include "serval.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <assert.h>
+#define uint32_t unsigned int
+#define uint8_t unsigned char
 
 // You need a separate nc structure for TX and RX
 struct nc {
   // Define the size parameters of the network coding data structures
   uint32_t window_size; // limited to the number of bits we can fit in a uint32_t
   uint32_t datagram_size; // number of bytes in each fixed sized unit
-  uint32_t queue_length; // maximum queued packets
+  uint32_t max_queue_size; // maximum queued packets
 
   // For RX only
   uint32_t *linear_combinations; // bitmap of which packets are in each received random linear combination of packets
+  uint32_t queue_size; // number of remaining queued datagrams being decoded
+
+  uint32_t max_recent_datagrams; // buffer of recently decoded datagrams
+  uint32_t recent_datagrams_start;
+  uint32_t recent_datagrams_count;
+  uint8_t **recent_datagram_buffers; // max_recent_datagrams long list of datagram_size byte buffers
+  uint32_t *recent_datagram_buffer_numbers; // max_recent_datagrams long list
 
   // For both RX & TX
 
@@ -36,11 +48,11 @@ struct nc {
   uint32_t window_used;    // # of datagrams used in the window
 
   // Buffers for holding sent or received datagrams
-  uint8_t **datagram_buffers; // queue_length long list of datagram_size byte buffers
+  uint8_t **datagram_buffers; // max_queue_size long list of datagram_size byte buffers
   // Vector of which buffer is used for each datagram.
   // This indirection is used for RX where as we do the Gauss-Jordan reduction the order of
   // received datagrams may get rearranged, and we don't want to waste time exchanging buffer contents.
-  uint32_t *buffer_numbers; // queue_length long list
+  uint32_t *buffer_numbers; // max_queue_size long list
 };
 
 void nc_free(struct nc *n)
@@ -50,7 +62,7 @@ void nc_free(struct nc *n)
   if (!n) return;
 
   if (n->datagram_buffers) {
-    for(i=0;i<n->queue_length;i++) free(n->datagram_buffers[i]);
+    for(i=0;i<n->max_queue_size;i++) free(n->datagram_buffers[i]);
     free(n->datagram_buffers);
     n->datagram_buffers=NULL;
   }
@@ -58,44 +70,272 @@ void nc_free(struct nc *n)
     free(n->buffer_numbers);
     n->buffer_numbers=NULL;
   }
+  if (n->recent_datagram_buffers) {
+    for(i=0;i<n->max_recent_datagrams;i++) free(n->recent_datagram_buffers[i]);
+    free(n->recent_datagram_buffers);
+    n->recent_datagram_buffers=NULL;
+  }
+  if (n->recent_datagram_buffer_numbers) {
+    free(n->recent_datagram_buffer_numbers);
+    n->recent_datagram_buffer_numbers=NULL;
+  }
   free(n);
   return;
 }
 
-struct nc *nc_new(uint32_t window_size, uint32_t datagram_size, uint32_t queue_length)
+struct nc *nc_new(uint32_t window_size, uint32_t datagram_size, 
+		  uint32_t max_queue_size, uint32_t recent_datagram_count)
 {
   // Sanity check inputs
   if (window_size<0||window_size>32) return NULL;
   if (datagram_size<0||datagram_size>65536) return NULL;
-  if (queue_length<(window_size+1)||queue_length>256) return NULL;
-
+  // max_queue_size MUST be at least window_size both for the algorithm to work,
+  // and also to ensure that we allocate the right number of buffers.  Failure
+  // would result in memory corruption.
+  if (max_queue_size<(window_size+1)||max_queue_size>256) return NULL;
+  if (recent_datagram_count<0||recent_datagram_count>window_size) return NULL;
+  
   // Allocate structure pre-zeroed
   struct nc *n=calloc(sizeof(struct nc),1);
   if (!n) return NULL;
   
   n->window_size=window_size;
   n->datagram_size=datagram_size;
-  n->queue_length=queue_length;
+  n->max_queue_size=max_queue_size;
 
   int i;
 
   // Allocate vector of pointers to buffers
-  n->datagram_buffers=malloc(sizeof(uint32_t)*n->queue_length);
+  n->datagram_buffers=malloc(sizeof(uint32_t)*n->max_queue_size);
   if (!n->datagram_buffers) { nc_free(n); return NULL; }
   // Buffer numbers vector also
-  n->buffer_numbers=malloc(sizeof(uint32_t)*n->queue_length);
+  n->buffer_numbers=malloc(sizeof(uint32_t)*n->max_queue_size);
   if (!n->buffer_numbers) { nc_free(n); return NULL; }
   // Initialise buffer numbers in cardinal order
-  for(i=0;i<n->queue_length;i++) n->buffer_numbers[i]=i;
+  for(i=0;i<n->max_queue_size;i++) n->buffer_numbers[i]=i;
 
   // Allocate the datagram buffers themselves
-  for(i=0;i<n->queue_length;i++)
+  for(i=0;i<n->max_queue_size;i++)
     if ((n->datagram_buffers[i]=malloc(n->datagram_size))==NULL) 
       { nc_free(n); return NULL; }
+
+  if (recent_datagram_count) {
+    // Allocate vector of pointers to buffers
+    n->recent_datagram_buffers=malloc(sizeof(uint32_t)*n->max_recent_datagrams);
+    if (!n->recent_datagram_buffers) { nc_free(n); return NULL; }
+    // Buffer numbers vector also
+    n->recent_datagram_buffer_numbers
+      =malloc(sizeof(uint32_t)*n->max_recent_datagrams);
+    if (!n->recent_datagram_buffer_numbers) { nc_free(n); return NULL; }
+    // Initialise buffer numbers in cardinal order
+    for(i=0;i<n->max_recent_datagrams;i++) n->recent_datagram_buffer_numbers[i]=i;
+    
+    // Allocate the datagram buffers themselves
+    for(i=0;i<n->max_recent_datagrams;i++)
+      if ((n->recent_datagram_buffers[i]=malloc(n->datagram_size))==NULL) 
+	{ nc_free(n); return NULL; }
+  }
 
   // Structure is now fully initialised, so return it.
   return n;
 }
+
+int nc_tx_enqueue_datagram(struct nc *n,unsigned char *d,int len)
+{
+  if (!n) return -1;
+  if (!d) return -1;
+  if (len!=n->datagram_size) return -1;
+  // On the TX side the maximum number of queued packets
+  // is the MINIMUM of the maximum queue size and the window
+  // size.
+  if (n->window_used>=n->max_queue_size) return -1;
+  if (n->window_used>=n->window_size) return -1;
+  
+  // Add datagram to queue
+  bcopy(d,n->datagram_buffers[n->buffer_numbers[n->window_used]],n->datagram_size);
+  n->window_used++;
+  return 0;
+}
+
+int nc_tx_ack_dof(struct nc *n,uint32_t latest_dof)
+{
+  if (!n) return -1;
+  // Acknowledgement is for DOF that is yet to exist
+  if (latest_dof>(n->window_start+n->window_size)) return -1;
+
+  // Nothing to do if we have already acknowledged this degree of freedom
+  if (latest_dof<n->window_start) return 0;
+
+  // DOF is in window, so shift out all datagrams that preceed the datagram
+  // indicated by the DOF
+  int i;
+  do {
+    // Release buffer for the datagram in question, and shuffle the rest down one.
+    // This could be done more efficiently by shuffling down many at once, but
+    // the current code is clear and simple, and the computational cost is low.
+    uint32_t freed_datagram_buffer=n->buffer_numbers[0];
+    for(i=0;i<n->max_queue_size-1;i++) n->buffer_numbers[i]=n->buffer_numbers[i+1];
+    n->buffer_numbers[n->max_queue_size-1]=freed_datagram_buffer;
+    n->window_start++;
+    n->window_used--;
+  } while(n->window_start!=latest_dof);
+  return 0;
+}
+
+int nc_tx_random_linear_combination(struct nc *n,uint8_t *combined_datagram,
+				    uint32_t buffer_size,uint32_t *output_size)
+{
+  if (!n) return -1;
+  if (!combined_datagram) return -1;
+  // TODO: Don't waste more bytes than we need to on the bitmap and sequence number
+  if (buffer_size<n->datagram_size+sizeof(uint32_t)+sizeof(uint32_t)) return -1;
+
+  if (!n->window_used) {
+    // Nothing to send, so just return
+    *output_size=0;
+    return 1;
+  }
+
+  // TODO: Check that combination is linearly independent of recently produced
+  // combinations, i.e., that it contributes information.
+
+  // get 32 bit random number.  random() only returns 31 bits, 
+  // hence the double call and shift
+  uint32_t combination=random()^(random()<<1);
+  
+  // restrict set bits to only those in the window
+  // i.e., zero lower (32-n->window_used) bits
+  combination=(combination>>(32-n->window_used))<<(32-n->window_used);
+
+  // Never send all zeros, since that conveys no information.  
+  if (!combination) {
+    combination=0xffffffff;
+    // restrict set bits to only those in the window
+    // i.e., zero lower (32-n->window_used) bits
+    combination=(combination>>(32-n->window_used))<<(32-n->window_used);
+  }
+  // should never be zero
+  assert(combination!=0);
+
+  // Now produce the output packet
+  // Write out the current start of window
+  combined_datagram[0]=(n->window_start>>24)&0xff;
+  combined_datagram[1]=(n->window_start>>16)&0xff;
+  combined_datagram[2]=(n->window_start>> 8)&0xff;
+  combined_datagram[3]=(n->window_start>> 0)&0xff;
+  // Write out bitmap of combinations involved
+  combined_datagram[4]=(combination>>24)&0xff;
+  combined_datagram[5]=(combination>>16)&0xff;
+  combined_datagram[6]=(combination>> 8)&0xff;
+  combined_datagram[7]=(combination>> 0)&0xff;
+  // Produce linear combination
+  bzero(combined_datagram,n->datagram_size+sizeof(uint32_t));
+  int i,j;
+  for(i=0;i<n->window_used;i++) {
+    if ((combination<<i)&0x80000000) {
+      // Combination includes this packet, so XOR with it
+      for(j=0;j<n->datagram_size;j++)
+	combined_datagram[sizeof(uint32_t)+sizeof(uint32_t)+j]
+	  ^=n->datagram_buffers[n->buffer_numbers[i]][j];
+    }
+  }
+  *output_size=n->datagram_size+sizeof(uint32_t)+sizeof(uint32_t);
+  return 0;
+}
+
+int nc_release_recent_datagrams(struct nc *n,uint32_t combination_window_start)
+{
+  if (!n) return -1;
+
+  if (combination_window_start>=n->recent_datagrams_start
+      &&combination_window_start<=n->window_start)
+    {
+      // TODO: Shift down multiple slots at once when warranted to 
+      // improve efficiency.
+      while(combination_window_start>=n->recent_datagrams_start) {
+	uint32_t freed_datagram_buffer=n->recent_datagram_buffer_numbers[0];
+	int i;
+	for(i=0;i<n->max_recent_datagrams-1;i++) 
+	  n->recent_datagram_buffer_numbers[i]
+	    =n->recent_datagram_buffer_numbers[i+1];
+	n->recent_datagram_buffer_numbers[n->max_queue_size-1]
+	  =freed_datagram_buffer;
+	n->recent_datagrams_start++;
+      }
+    }
+  return 0;
+}
+
+int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
+{
+  if (!n) return -1;
+  if (!combination) return -1;
+  if (len!=n->datagram_size+sizeof(uint32_t)+sizeof(uint32_t)) return -1;
+
+  // Fail if there is no space
+  if (n->queue_size>=n->max_queue_size) return -1;
+  
+  // Translate combination into our current window frame.
+  // If it contains previously received datagrams, we should check if we
+  // have them on hand, and if so we can reduce those from the combination.
+  // If they are not on hand, then we cannot process the datagram.
+  uint32_t combination_window_start
+    =(combination[0]<<24)|(combination[1]<<16)|(combination[2]<<8)|combination[3];
+  uint32_t combination_bitmap
+    =(combination[4]<<24)|(combination[5]<<16)|(combination[6]<<8)|combination[7];
+
+  nc_release_recent_datagrams(n,combination_window_start);
+
+  while(combination_window_start<n->window_start) {
+    if (combination_bitmap&0x80000000) {
+      // TODO: Look through recently decoded datagrams, and reduce from this
+      // combination. If we cannot, then we cannot decode this 
+      // Until we can do that, we must simply fail datagrams that start before
+      // the current window.
+	if (combination_window_start==n->recent_datagrams_start
+	    &&(combination_window_start<
+	       (n->recent_datagrams_start+n->recent_datagrams_count)))
+	  {
+	    // We have the datagram - reduce it from the current combination
+	    int i;
+	    int buffer
+	      =n->recent_datagram_buffer_numbers[combination_window_start
+						 -n->recent_datagrams_start];
+	    for(i=0;i<n->datagram_size;i++) 
+	      combination[8+i]^=n->recent_datagram_buffers[buffer][i];
+	    // Then advance the combination start and shift the bitmap accordingly
+	    combination_bitmap=combination_bitmap<<1;
+	    combination_window_start++;
+	  }
+	else
+	  return -1;
+    }    
+    // If there is no information left in the combination, then stop processing it
+    if (!combination_bitmap) return -1;
+  }
+
+  // Attempt to reduce datagram before inserting.
+  // We know that previous calls leave the list sorted in descending order,
+  // so we can perform the reduction efficiently.
+
+  // Add to queue
+  //  uint32_t buffer_number=n->buffer_numbers[n->buffer_numbers[n->
+
+  return -1;
+}
+
+/* TODO: Tests that should be written.
+   1. nc_new() works, and rejects bad input.
+   2. nc_free() works, including on partially initialised structures.
+   3. nc_tx_enqueue_datagram() works, including failing on bad input and when the
+      queue is full.
+   4. nc_tx_ack_dof() works, rejects bad input, and correctly releases buffers.
+   5. nc_tx_random_linear_combination() works, rejects bad input, and produces valid
+      linear combinations of the enqueued datagrams, and never produces all zeroes.
+   6. nc_rx_linear_combination() works, rejects bad input
+   7. nc_rx_linear_combination() rejects when RX queue full, when combination starts
+      before current window.
+*/
 
 #define ROWS 40
 
