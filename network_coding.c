@@ -206,7 +206,7 @@ int nc_tx_random_linear_combination(struct nc *n,uint8_t *combined_datagram,
   // get 32 bit random number.  random() only returns 31 bits, 
   // hence the double call and shift
   uint32_t combination=random()^(random()<<1);
-  
+
   // restrict set bits to only those in the window
   // i.e., zero lower (32-n->window_used) bits
   combination=(combination>>(32-n->window_used))<<(32-n->window_used);
@@ -233,7 +233,7 @@ int nc_tx_random_linear_combination(struct nc *n,uint8_t *combined_datagram,
   combined_datagram[6]=(combination>> 8)&0xff;
   combined_datagram[7]=(combination>> 0)&0xff;
   // Produce linear combination
-  bzero(combined_datagram,n->datagram_size+sizeof(uint32_t));
+  bzero(&combined_datagram[sizeof(uint32_t)+sizeof(uint32_t)],n->datagram_size);
   int i,j;
   for(i=0;i<n->window_used;i++) {
     if ((combination<<i)&0x80000000) {
@@ -341,6 +341,25 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
       before current window.
 */
 
+int nc_test_dump(char *name, unsigned char *addr, int len)
+{
+  int i,j;
+  if (name)
+    fprintf(stderr,"Dump of %s\n",name);
+  for(i=0;i<len;i+=16){
+    fprintf(stderr,"  %04x :",i);
+    for(j=0;j<16&&(i+j)<len;j++) 
+      fprintf(stderr," %02x",addr[i+j]);
+    for(;j<16;j++) 
+      fprintf(stderr,"   ");
+    fprintf(stderr,"    ");
+    for(j=0;j<16&&(i+j)<len;j++)
+      fprintf(stderr,"%c",addr[i+j]>=' '&&addr[i+j]<0x7f?addr[i+j]:'.');
+    fprintf(stderr,"\n");
+  }
+  return 0;
+}
+
 int nc_test_random_datagram(uint8_t *d,int len)
 {
   int i;
@@ -384,6 +403,41 @@ int nc_test()
     fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
     return -1;
   } else fprintf(stderr,"PASS: Enqueued datagram for TX\n");
+  if (tx->window_used==1) 
+    fprintf(stderr,"PASS: Enqueueing datagram increases window_used\n");
+  else
+    fprintf(stderr,"FAIL: Enqueueing datagram increases window_used\n");
+
+  int j,fail=0;
+  for(i=0;i<10;i++) {
+    uint8_t outbuffer[4+4+200];
+    int len=4+4+200;
+    uint32_t written=0;
+    fail=nc_tx_random_linear_combination(tx,outbuffer,len,&written);
+    if (fail) { 
+      fprintf(stderr,"FAIL: Produce random linear combination of single packet for TX\n");
+      break;
+    }
+    if (!outbuffer[4]) {
+      fprintf(stderr,"FAIL: Should not produce empty linear combination bitmap\n");
+      nc_test_dump("output combination with headers",outbuffer,written);
+      fail=1;
+      break;
+    }
+    for(j=0;j<200;j++) if (outbuffer[8+j]!=adatagram[j]) break;
+    if (j<200) {
+      fprintf(stderr,"FAIL: Output identity datagram when only one in queue\n");
+      nc_test_dump("output combination with headers",outbuffer,written);
+      nc_test_dump("original datagram",adatagram,200);
+      printf("Error was in %dth byte\n",j);
+      fail=1;
+      break;
+    }
+  }
+  if (fail) return -1;
+  fprintf(stderr,"PASS: Produce random linear combination of single packet for TX\n");
+  fprintf(stderr,"PASS: Should not produce empty linear combination bitmap\n");
+  fprintf(stderr,"PASS: Output identity datagram when only one in queue\n");
 
   return 0;
 }
