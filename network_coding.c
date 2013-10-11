@@ -439,6 +439,71 @@ int nc_test()
   fprintf(stderr,"PASS: Should not produce empty linear combination bitmap\n");
   fprintf(stderr,"PASS: Output identity datagram when only one in queue\n");
 
+  if (nc_tx_enqueue_datagram(tx,bdatagram,200)) {
+    fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
+    return -1;
+  } 
+  if (tx->window_used!=2) 
+    fprintf(stderr,"FAIL: Enqueueing datagram increases window_used\n");
+
+  if (nc_tx_enqueue_datagram(tx,cdatagram,200)) {
+    fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
+    return -1;
+  } 
+  if (tx->window_used!=3) 
+    fprintf(stderr,"FAIL: Enqueueing datagram increases window_used\n");
+
+  if (nc_tx_enqueue_datagram(tx,ddatagram,200)) {
+    fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
+    return -1;
+  } 
+  if (tx->window_used!=4) 
+    fprintf(stderr,"FAIL: Enqueueing datagram increases window_used\n");
+
+  if (nc_tx_enqueue_datagram(tx,edatagram,200)) {
+    fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
+    return -1;
+  } 
+  if (tx->window_used!=5) 
+    fprintf(stderr,"FAIL: Enqueueing datagram increases window_used\n");
+
+
+  for(i=0;i<100;i++) {
+    uint8_t outbuffer[4+4+200];
+    int len=4+4+200;
+    uint32_t written=0;
+    fail=nc_tx_random_linear_combination(tx,outbuffer,len,&written);
+    if (fail) { 
+      fprintf(stderr,"FAIL: Produce random linear combination of 5 packets queued for TX\n");
+      break;
+    }
+    if (!outbuffer[4]) {
+      fprintf(stderr,"FAIL: Should not produce empty linear combination bitmap\n");
+      nc_test_dump("output combination with headers",outbuffer,written);
+      fail=1;
+      break;
+    }
+    for(j=0;j<200;j++) {
+      if (outbuffer[4]&0x80) outbuffer[8+j]^=adatagram[j];
+      if (outbuffer[4]&0x40) outbuffer[8+j]^=bdatagram[j];
+      if (outbuffer[4]&0x20) outbuffer[8+j]^=cdatagram[j];
+      if (outbuffer[4]&0x10) outbuffer[8+j]^=ddatagram[j];
+      if (outbuffer[4]&0x08) outbuffer[8+j]^=edatagram[j];
+      if (outbuffer[8+j]) break;
+    }
+    if (j<200) {
+      fprintf(stderr,"FAIL: Output linear combination from five packets in the queue\n");
+      nc_test_dump("residue of output combination with headers",outbuffer,written);
+      fail=1;
+      break;
+    }
+  }
+  if (fail) return -1;
+  fprintf(stderr,"PASS: Produce random linear combination of five datagrams queued for TX\n");
+  fprintf(stderr,"PASS: Should not produce empty linear combination bitmap with 5 queued datagrams\n");
+  fprintf(stderr,"PASS: Output linear combination from five packets in the queue\n");
+
+
   return 0;
 }
 
