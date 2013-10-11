@@ -323,8 +323,8 @@ int nc_id_and_buffer_comp(void *a,void *b)
 {
   struct nc_id_and_buffer *aa=a,*bb=b;
 
-  if (aa->n<bb->n) return -1;
-  if (bb->n<aa->n) return 1;
+  if (aa->n<bb->n) return 1;
+  if (bb->n<aa->n) return -1;
   return 0;
 }
 
@@ -346,10 +346,11 @@ int nc_reduce_combinations(struct nc *n)
 	(&n->linear_combinations[i].n,
 	 n->datagram_buffers[n->linear_combinations[i].buffer_number],n,i+1);
 
-      if (r==-1) return -1; else touches++;
+      if (r==-1) return -1; 
+      if (r>0) touches++;
     }
 
-    nc_test_dump_rx_queue("After all reduce",n);
+    nc_test_dump_rx_queue("After reduce",n);
   }
   nc_test_dump_rx_queue("After all reduce",n);
   return 0;
@@ -437,12 +438,10 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
   uint32_t buffer_number=n->linear_combinations[n->queue_size].buffer_number;
   bcopy(&combination[8],n->datagram_buffers[buffer_number],n->datagram_size);
   n->linear_combinations[n->queue_size].n=combination_bitmap;
-
+  n->queue_size++;
 
   // Perform general reduction
-  nc_reduce_combinations(n);
-
-  return -7;
+  return nc_reduce_combinations(n);
 }
 
 #ifdef RUNTESTS
@@ -635,7 +634,8 @@ int nc_test()
   fprintf(stderr,"PASS: Should not produce empty linear combination bitmap with 5 queued datagrams\n");
   fprintf(stderr,"PASS: Output linear combination from five packets in the queue\n");
 
-  // Now lets try receiving a linear combination
+  // Now lets try receiving some linear combinations
+  for(i=0;i<7;i++)
   {
     uint8_t outbuffer[4+4+200];
     int len=4+4+200;
@@ -650,8 +650,8 @@ int nc_test()
       fprintf(stderr,"FAIL: Accept linear combination for RX (code=%d)\n",fail);
       return -1;
     } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
-
   }
+
   return 0;
 }
 
