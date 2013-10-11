@@ -110,10 +110,10 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
   int i;
 
   // Allocate vector of pointers to buffers
-  n->datagram_buffers=malloc(sizeof(uint32_t)*n->max_queue_size);
+  n->datagram_buffers=malloc(sizeof(uint32_t*)*n->max_queue_size);
   if (!n->datagram_buffers) { nc_free(n); return NULL; }
   // Buffer numbers vector also
-  n->buffer_numbers=malloc(sizeof(uint32_t)*n->max_queue_size);
+  n->buffer_numbers=malloc(sizeof(uint32_t*)*n->max_queue_size);
   if (!n->buffer_numbers) { nc_free(n); return NULL; }
   // Initialise buffer numbers in cardinal order
   for(i=0;i<n->max_queue_size;i++) n->buffer_numbers[i]=i;
@@ -125,11 +125,11 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
 
   if (recent_datagram_count) {
     // Allocate vector of pointers to buffers
-    n->recent_datagram_buffers=malloc(sizeof(uint32_t)*n->max_recent_datagrams);
+    n->recent_datagram_buffers=malloc(sizeof(uint32_t*)*n->max_recent_datagrams);
     if (!n->recent_datagram_buffers) { nc_free(n); return NULL; }
     // Buffer numbers vector also
     n->recent_datagram_buffer_numbers
-      =malloc(sizeof(uint32_t)*n->max_recent_datagrams);
+      =malloc(sizeof(uint32_t*)*n->max_recent_datagrams);
     if (!n->recent_datagram_buffer_numbers) { nc_free(n); return NULL; }
     // Initialise buffer numbers in cardinal order
     for(i=0;i<n->max_recent_datagrams;i++) n->recent_datagram_buffer_numbers[i]=i;
@@ -341,6 +341,13 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
       before current window.
 */
 
+int nc_test_random_datagram(uint8_t *d,int len)
+{
+  int i;
+  for(i=0;i<len;i++) d[i]=random()&0xff;
+  return 0;
+}
+
 int nc_test()
 {
   struct nc *rx,*tx;
@@ -357,9 +364,31 @@ int nc_test()
     fprintf(stderr,"FATAL: Cannot continue tests.\n");
     return -1;
   } else fprintf(stderr,"PASS: Created validly defined nc struct for TX.\n");
- 
+
+  // Prepare some random datagrams for subsequent tests
+  int i;
+  uint8_t adatagram[200];
+  uint8_t bdatagram[200];
+  uint8_t cdatagram[200];
+  uint8_t ddatagram[200];
+  uint8_t edatagram[200];
+  nc_test_random_datagram(adatagram,200);
+  nc_test_random_datagram(bdatagram,200);
+  nc_test_random_datagram(cdatagram,200);
+  nc_test_random_datagram(ddatagram,200);
+  nc_test_random_datagram(edatagram,200);
+
+  // Test inserting datagrams into the queue
+
+  if (nc_tx_enqueue_datagram(tx,adatagram,200)) {
+    fprintf(stderr,"FAIL: Failed to enqueue datagram for TX\n");
+    return -1;
+  } else fprintf(stderr,"PASS: Enqueued datagram for TX\n");
+
   return 0;
 }
+
+
 
 #define ROWS 40
 
