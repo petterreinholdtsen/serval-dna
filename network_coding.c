@@ -89,10 +89,14 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
   // Sanity check inputs
   if (window_size<0||window_size>32) return NULL;
   if (datagram_size<0||datagram_size>65536) return NULL;
-  // max_queue_size MUST be at least window_size both for the algorithm to work,
+  // max_queue_size MUST be at least window_size both for the RX algorithm to work,
   // and also to ensure that we allocate the right number of buffers.  Failure
   // would result in memory corruption.
-  if (max_queue_size<(window_size+1)||max_queue_size>256) return NULL;
+  if (recent_datagram_count) {
+    if (max_queue_size<(window_size+1)||max_queue_size>256) return NULL;
+  } else {
+    if (max_queue_size!=window_size||max_queue_size>256) return NULL;
+  }
   if (recent_datagram_count<0||recent_datagram_count>window_size) return NULL;
   
   // Allocate structure pre-zeroed
@@ -337,6 +341,26 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
       before current window.
 */
 
+int nc_test()
+{
+  struct nc *rx,*tx;
+
+  rx=nc_new(32,200,40,32);
+  if (!rx) {
+    fprintf(stderr,"FAIL: Failed to create validly defined nc struct for RX.\n");
+    fprintf(stderr,"FATAL: Cannot continue tests.\n");
+    return -1;
+  } else fprintf(stderr,"PASS: Created validly defined nc struct for RX.\n");
+  tx=nc_new(32,200,32,0);
+  if (!tx) {
+    fprintf(stderr,"FAIL: Failed to create validly defined nc struct for TX.\n");
+    fprintf(stderr,"FATAL: Cannot continue tests.\n");
+    return -1;
+  } else fprintf(stderr,"PASS: Created validly defined nc struct for TX.\n");
+ 
+  return 0;
+}
+
 #define ROWS 40
 
 int count=0;
@@ -388,15 +412,19 @@ int reduce_set(unsigned int set[ROWS])
 
 int main(int argc,char **argv)
 {
-  unsigned int set[ROWS];
-  int i;
-  for(i=0;i<ROWS;i++) set[i]=random()|((random()&1)<<31);
+  return nc_test();
 
-  print_set("Original set",set);
-  while(1) {
+  /*
+    unsigned int set[ROWS];
+    int i;
+    for(i=0;i<ROWS;i++) set[i]=random()|((random()&1)<<31);
+    
+    print_set("Original set",set);
+    while(1) {
     sort_set(set);
     print_set("after sort",set);
     reduce_set(set);
     print_set("after reduce",set);
-  }
+    } 
+  */
 }
