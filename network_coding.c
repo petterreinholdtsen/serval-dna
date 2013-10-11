@@ -33,7 +33,7 @@ struct nc {
   uint32_t max_queue_size; // maximum queued packets
 
   // For RX only
-  uint32_t *linear_combinations; // bitmap of which packets are in each received random linear combination of packets
+  uint32_t *linear_combinations; // bitmap of which packets are in each received random linear combination of packets (max_queue_size of them)
   uint32_t queue_size; // number of remaining queued datagrams being decoded
 
   uint32_t max_recent_datagrams; // buffer of recently decoded datagrams
@@ -69,6 +69,10 @@ void nc_free(struct nc *n)
   if (n->buffer_numbers) {
     free(n->buffer_numbers);
     n->buffer_numbers=NULL;
+  }
+  if (n->linear_combinations) {
+    free(n->linear_combinations);
+    n->linear_combinations=NULL;
   }
   if (n->recent_datagram_buffers) {
     for(i=0;i<n->max_recent_datagrams;i++) free(n->recent_datagram_buffers[i]);
@@ -124,6 +128,10 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
       { nc_free(n); return NULL; }
 
   if (recent_datagram_count) {
+    // List of linear combinations
+    n->linear_combinations=malloc(sizeof(uint32_t)*n->max_queue_size);
+    if (!n->linear_combinations) { nc_free(n); return NULL; }
+
     // Allocate vector of pointers to buffers
     n->recent_datagram_buffers=malloc(sizeof(uint32_t*)*n->max_recent_datagrams);
     if (!n->recent_datagram_buffers) { nc_free(n); return NULL; }
@@ -272,14 +280,38 @@ int nc_release_recent_datagrams(struct nc *n,uint32_t combination_window_start)
   return 0;
 }
 
+int nc_reduce_linear_combination(uint32_t *combination_bitmap,
+				 uint8_t *combination,
+				 struct nc *n,
+				 uint32_t first_row)
+{
+  if (!n) return -1;
+  if (!combination_bitmap) return -1;
+  if (!combination) return -1;
+
+  int i,j;
+  for(i=first_row;i<n->queue_size;i++) {
+    if ((n->linear_combinations[i]<*combination_bitmap)
+	&&((n->linear_combinations[i]^*combination_bitmap)<*combination_bitmap))
+      {
+	// Makes sense to reduce using this combination
+	uint8_t *buffer=n->datagram_buffers[n->buffer_numbers[i]];
+	for(j=0;j<n->datagram_size;j++) combination[j]^=buffer[j];
+	*combination_bitmap^=n->linear_combinations[i];
+      }
+  }
+  return 0;
+}
+
+
 int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 {
   if (!n) return -1;
-  if (!combination) return -1;
-  if (len!=n->datagram_size+sizeof(uint32_t)+sizeof(uint32_t)) return -1;
+  if (!combination) return -2;
+  if (len!=n->datagram_size+sizeof(uint32_t)+sizeof(uint32_t)) return -3;
 
   // Fail if there is no space
-  if (n->queue_size>=n->max_queue_size) return -1;
+  if (n->queue_size>=n->max_queue_size) return -4;
   
   // Translate combination into our current window frame.
   // If it contains previously received datagrams, we should check if we
@@ -291,6 +323,9 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
     =(combination[4]<<24)|(combination[5]<<16)|(combination[6]<<8)|combination[7];
 
   nc_release_recent_datagrams(n,combination_window_start);
+
+  printf("rx combination = 0x%08x\n",combination_bitmap);
+  nc_test_dump("combination before any reduce",&combination[8],n->datagram_size);
 
   while(combination_window_start<n->window_start) {
     if (combination_bitmap&0x80000000) {
@@ -314,20 +349,45 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 	    combination_window_start++;
 	  }
 	else
-	  return -1;
+	  return -5;
     }    
     // If there is no information left in the combination, then stop processing it
-    if (!combination_bitmap) return -1;
+    if (!combination_bitmap) return 1;
   }
+  
+  // Deal with combination windows starting in the future
+  // Reject if they involve datagrams beyond the end of our current
+  // window, else keep.
+  // TODO: We could keep them all if there is queue space, and mark them
+  // somehow so that they can get evicted if needed, but kept otherwise,
+  // since they do contain information that is useful to us.
+  while(combination_window_start>n->window_start) {
+    if (combination_bitmap&0x00000001) {
+      // Combination includes a datagram that is beyond the end of our window.
+      return -6;
+    } else {
+      combination_bitmap=combination_bitmap>>1;
+      combination_window_start--;
+    }
+  }
+
+  assert(combination_window_start==n->window_start);
+
+  nc_test_dump("combination after recent reduce",&combination[8],n->datagram_size);
 
   // Attempt to reduce datagram before inserting.
   // We know that previous calls leave the list sorted in descending order,
   // so we can perform the reduction efficiently.
+  nc_reduce_linear_combination(&combination_bitmap,&combination[8],n,0);
+  nc_test_dump("combination after queue reduce",&combination[8],n->datagram_size);
+  if (!combination_bitmap) return 1;
 
   // Add to queue
-  //  uint32_t buffer_number=n->buffer_numbers[n->buffer_numbers[n->
+  uint32_t buffer_number=n->buffer_numbers[n->queue_size];
+  bcopy(&combination[8],n->datagram_buffers[buffer_number],n->datagram_size);
+  n->linear_combinations[n->queue_size]=combination_bitmap;
 
-  return -1;
+  return -7;
 }
 
 /* TODO: Tests that should be written.
@@ -517,7 +577,7 @@ int nc_test()
     }
     fail=nc_rx_linear_combination(rx,outbuffer,written);
     if (fail) { 
-      fprintf(stderr,"FAIL: Accept linear combination for RX\n");
+      fprintf(stderr,"FAIL: Accept linear combination for RX (code=%d)\n",fail);
       return -1;
     } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
 
