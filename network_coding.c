@@ -256,7 +256,8 @@ int nc_release_recent_datagrams(struct nc *n,uint32_t combination_window_start)
     {
       // TODO: Shift down multiple slots at once when warranted to 
       // improve efficiency.
-      while(combination_window_start>=n->recent_datagrams_start) {
+      while(n->recent_datagrams_count>0
+	    &&combination_window_start>=n->recent_datagrams_start) {
 	uint32_t freed_datagram_buffer=n->recent_datagram_buffer_numbers[0];
 	int i;
 	for(i=0;i<n->max_recent_datagrams-1;i++) 
@@ -265,6 +266,7 @@ int nc_release_recent_datagrams(struct nc *n,uint32_t combination_window_start)
 	n->recent_datagram_buffer_numbers[n->max_queue_size-1]
 	  =freed_datagram_buffer;
 	n->recent_datagrams_start++;
+	n->recent_datagrams_count--;
       }
     }
   return 0;
@@ -503,7 +505,23 @@ int nc_test()
   fprintf(stderr,"PASS: Should not produce empty linear combination bitmap with 5 queued datagrams\n");
   fprintf(stderr,"PASS: Output linear combination from five packets in the queue\n");
 
+  // Now lets try receiving a linear combination
+  {
+    uint8_t outbuffer[4+4+200];
+    int len=4+4+200;
+    uint32_t written=0;
+    fail=nc_tx_random_linear_combination(tx,outbuffer,len,&written);
+    if (fail) { 
+      fprintf(stderr,"FAIL: Produce random linear combination of 5 packets queued for TX\n");
+      return -1;
+    }
+    fail=nc_rx_linear_combination(rx,outbuffer,written);
+    if (fail) { 
+      fprintf(stderr,"FAIL: Accept linear combination for RX\n");
+      return -1;
+    } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
 
+  }
   return 0;
 }
 
