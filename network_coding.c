@@ -25,6 +25,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define uint32_t unsigned int
 #define uint8_t unsigned char
 
+struct nc_id_and_buffer {
+  uint32_t n;
+  uint32_t buffer_number;
+};
+
 // You need a separate nc structure for TX and RX
 struct nc {
   // Define the size parameters of the network coding data structures
@@ -33,7 +38,7 @@ struct nc {
   uint32_t max_queue_size; // maximum queued packets
 
   // For RX only
-  uint32_t *linear_combinations; // bitmap of which packets are in each received random linear combination of packets (max_queue_size of them)
+  struct nc_id_and_buffer *linear_combinations; // bitmap of which packets are in each received random linear combination of packets (max_queue_size of them)
   uint32_t queue_size; // number of remaining queued datagrams being decoded
 
   uint32_t max_recent_datagrams; // buffer of recently decoded datagrams
@@ -54,6 +59,9 @@ struct nc {
   // received datagrams may get rearranged, and we don't want to waste time exchanging buffer contents.
   uint32_t *buffer_numbers; // max_queue_size long list
 };
+
+int nc_test_dump(char *name, unsigned char *addr, int len);
+int nc_test_dump_rx_queue(char *msg,struct nc *n);
 
 void nc_free(struct nc *n)
 {
@@ -116,11 +124,13 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
   // Allocate vector of pointers to buffers
   n->datagram_buffers=malloc(sizeof(uint32_t*)*n->max_queue_size);
   if (!n->datagram_buffers) { nc_free(n); return NULL; }
-  // Buffer numbers vector also
+  if (!recent_datagram_count) {
+  // Buffer numbers vector also if TX
   n->buffer_numbers=malloc(sizeof(uint32_t*)*n->max_queue_size);
   if (!n->buffer_numbers) { nc_free(n); return NULL; }
   // Initialise buffer numbers in cardinal order
   for(i=0;i<n->max_queue_size;i++) n->buffer_numbers[i]=i;
+  }
 
   // Allocate the datagram buffers themselves
   for(i=0;i<n->max_queue_size;i++)
@@ -129,8 +139,11 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
 
   if (recent_datagram_count) {
     // List of linear combinations
-    n->linear_combinations=malloc(sizeof(uint32_t)*n->max_queue_size);
+    n->linear_combinations=malloc(sizeof(struct nc_id_and_buffer *)*n->max_queue_size);
     if (!n->linear_combinations) { nc_free(n); return NULL; }
+    // Initialise buffer numbers in cardinal order
+    for(i=0;i<n->max_queue_size;i++) n->linear_combinations[i].buffer_number=i;
+
 
     // Allocate vector of pointers to buffers
     n->recent_datagram_buffers=malloc(sizeof(uint32_t*)*n->max_recent_datagrams);
@@ -290,19 +303,57 @@ int nc_reduce_linear_combination(uint32_t *combination_bitmap,
   if (!combination) return -1;
 
   int i,j;
+  int touches=0;
   for(i=first_row;i<n->queue_size;i++) {
-    if ((n->linear_combinations[i]<*combination_bitmap)
-	&&((n->linear_combinations[i]^*combination_bitmap)<*combination_bitmap))
+    if ((n->linear_combinations[i].n<*combination_bitmap)
+	&&((n->linear_combinations[i].n^*combination_bitmap)<*combination_bitmap))
       {
 	// Makes sense to reduce using this combination
-	uint8_t *buffer=n->datagram_buffers[n->buffer_numbers[i]];
+	uint8_t *buffer
+	  =n->datagram_buffers[n->linear_combinations[i].buffer_number];
 	for(j=0;j<n->datagram_size;j++) combination[j]^=buffer[j];
-	*combination_bitmap^=n->linear_combinations[i];
+	*combination_bitmap^=n->linear_combinations[i].n;
+	touches++;
       }
   }
+  return touches;
+}
+
+int nc_id_and_buffer_comp(void *a,void *b)
+{
+  struct nc_id_and_buffer *aa=a,*bb=b;
+
+  if (aa->n<bb->n) return -1;
+  if (bb->n<aa->n) return 1;
   return 0;
 }
 
+int nc_reduce_combinations(struct nc *n)
+{
+  int i,j;
+  int touches=1;
+  nc_test_dump_rx_queue("Before reduce",n);
+  while(touches>0) {
+    touches=0;
+    // Sort rows into descending order
+    // This is slightly annoying to do because of our data structure
+    qsort(n->linear_combinations,n->queue_size,sizeof(struct nc_id_and_buffer),
+	  nc_id_and_buffer_comp);
+
+    // Reduce rows using those below
+    for(i=0;i<n->queue_size-1;i++) {
+      int r=nc_reduce_linear_combination
+	(&n->linear_combinations[i].n,
+	 n->datagram_buffers[n->linear_combinations[i].buffer_number],n,i+1);
+
+      if (r==-1) return -1; else touches++;
+    }
+
+    nc_test_dump_rx_queue("After all reduce",n);
+  }
+  nc_test_dump_rx_queue("After all reduce",n);
+  return 0;
+}
 
 int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 {
@@ -383,13 +434,18 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
   if (!combination_bitmap) return 1;
 
   // Add to queue
-  uint32_t buffer_number=n->buffer_numbers[n->queue_size];
+  uint32_t buffer_number=n->linear_combinations[n->queue_size].buffer_number;
   bcopy(&combination[8],n->datagram_buffers[buffer_number],n->datagram_size);
-  n->linear_combinations[n->queue_size]=combination_bitmap;
+  n->linear_combinations[n->queue_size].n=combination_bitmap;
+
+
+  // Perform general reduction
+  nc_reduce_combinations(n);
 
   return -7;
 }
 
+#ifdef RUNTESTS
 /* TODO: Tests that should be written.
    1. nc_new() works, and rejects bad input.
    2. nc_free() works, including on partially initialised structures.
@@ -402,6 +458,20 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
    7. nc_rx_linear_combination() rejects when RX queue full, when combination starts
       before current window.
 */
+
+int nc_test_dump_rx_queue(char *msg,struct nc *n)
+{
+  printf("RX queue: %s\n",msg);
+  int i;
+  for(i=0;i<n->queue_size;i++) {
+    printf("  %02d: 0x%08x ",
+	   i,n->linear_combinations[i].n);
+    int j;
+    for(j=0;j<32;j++) printf("%0d",(n->linear_combinations[i].n>>(31-j))&1);
+    printf("\n");
+  }
+  return 0;
+}
 
 int nc_test_dump(char *name, unsigned char *addr, int len)
 {
@@ -585,72 +655,9 @@ int nc_test()
   return 0;
 }
 
-
-
-#define ROWS 40
-
-int count=0;
-int print_set(char *msg, unsigned int set[ROWS])
-{
-  int i;
-  printf(">> %04d %s:\n",count++,msg);
-  for(i=0;i<ROWS;i++) {
-    printf("  %02d: 0x%08x ",
-	   i,set[i]);
-    int j;
-    for(j=0;j<32;j++) printf("%0d",(set[i]>>(31-j))&1);
-    printf("\n");
-  }
-  return 0;
-}
-
-// sort in reverse order
-int comp_rows(const void *a,const void *b)
-{
-  const unsigned int *aa=a,*bb=b;
-  if (*aa<*bb) return 1; 
-  if (*aa>*bb) return -1;
-  return 0;
-}
-
-int sort_set(unsigned int set[ROWS])
-{
-  qsort(set,ROWS,sizeof(unsigned int),comp_rows);
-  return 0;
-}
-
-int reduce_set(unsigned int set[ROWS])
-{
-  int i,j;
-  for(i=0;i<ROWS;i++)
-    for(j=i+1;j<ROWS;j++)
-      {
-	if ((set[i]^set[j])<set[i]) { 
-	  set[i]=set[i]^set[j];
-	  // TODO: enable break and combine sort into process to make it 
-	  // faster (probably). With separate sort, it is faster to XOR
-	  // everything if it keeps making it smaller.
-	  // break; 
-	}
-      }
-  return 0;
-}
-
 int main(int argc,char **argv)
 {
   return nc_test();
-
-  /*
-    unsigned int set[ROWS];
-    int i;
-    for(i=0;i<ROWS;i++) set[i]=random()|((random()&1)<<31);
-    
-    print_set("Original set",set);
-    while(1) {
-    sort_set(set);
-    print_set("after sort",set);
-    reduce_set(set);
-    print_set("after reduce",set);
-    } 
-  */
 }
+
+#endif
