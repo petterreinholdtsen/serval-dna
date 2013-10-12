@@ -631,7 +631,7 @@ int nc_test()
     fprintf(stderr,"FATAL: Cannot continue tests.\n");
     return -1;
   } else fprintf(stderr,"PASS: Created validly defined nc struct for RX.\n");
-  tx=nc_new(32,200,32,0,0);
+  tx=nc_new(32-4,200,32-4,0,0); // window size reduced by max_stuck value on RX side
   if (!tx) {
     fprintf(stderr,"FAIL: Failed to create validly defined nc struct for TX.\n");
     fprintf(stderr,"FATAL: Cannot continue tests.\n");
@@ -864,6 +864,62 @@ int nc_test()
       fprintf(stderr,"FAIL: TX DOF acknowledgement reduces window_used (is %d, should be 0)\n",tx->window_used);
     else 
       fprintf(stderr,"PASS: TX DOF acknowledgement reduces window_used\n");
+  }
+
+  // Now test DOF advancement in a more realistic and interesting situation where
+  // we feed a series of datagrams in and try to transfer them as we go along,
+  // acknowledging as we go along
+  {
+    int i;
+    int sent=0;
+    // Prime TX side with several packets
+    for(i=0;i<10;i++) {
+      uint8_t rdatagram[200];
+      int j;
+      for(j=1;j<200;j++) rdatagram[j]=random()&0xff;
+      rdatagram[0]=i;
+      if (nc_tx_enqueue_datagram(tx,rdatagram,200))
+	fprintf(stderr,"FAIL: Failed to dispatch pre-fill datagram %d of 100\n",i);
+    }
+    fprintf(stderr,"PASS: Prefilled TX queue for test.\n");
+
+    // Try to send 100 datagrams
+    for(i=0;i<100;i++)
+      {
+	// send datagrams until we can acknowledge a DOF, or there are no DOFs
+	// outstanding
+	while(tx->window_used
+	      &&((nc_rx_next_dof(rx)==tx->window_start)
+		 ||(tx->window_used==tx->window_size))
+	      ) {
+	  uint8_t outbuffer[4+4+200];
+	  int len=4+4+200;
+	  uint32_t written=0;	  
+	  printf("tx->window_start=%08x, rx->window_start=%08x\n",
+		 tx->window_start,rx->window_start);
+	  if (!nc_tx_random_linear_combination(tx,outbuffer,len,&written)) {
+	    nc_rx_linear_combination(rx,outbuffer,written);
+	    sent++;
+	    nc_tx_ack_dof(tx,nc_rx_next_dof(rx));	    
+	    // Read datagrams from RX side to allow rx->window_start to advance
+	    int datagram_number=0;
+	    while((datagram_number
+		   =nc_rx_get_next_datagram(rx,outbuffer,200,&written))>=0) {
+	      printf("Decoded datagram %d of 100 on receiving the %dth combination\n",
+		     datagram_number-5,sent);
+	    }
+	  }
+	}
+
+	uint8_t rdatagram[200];
+	int j;
+	for(j=1;j<200;j++) rdatagram[j]=random()&0xff;
+	rdatagram[0]=i;
+	if (nc_tx_enqueue_datagram(tx,rdatagram,200))
+	  fprintf(stderr,"FAIL: Failed to dispatch datagram %d of 100\n",i);
+	else
+	  fprintf(stderr,"PASS: Dispatched datagram %d of 100\n",i);
+      }
   }
 
   return 0;
