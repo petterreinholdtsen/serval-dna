@@ -40,6 +40,7 @@ struct nc {
   // For RX only
   struct nc_id_and_buffer *linear_combinations; // bitmap of which packets are in each received random linear combination of packets (max_queue_size of them)
   uint32_t queue_size; // number of remaining queued datagrams being decoded
+  uint32_t max_stuck_datagrams; // number of datagrams "seen" but not "resolved"
 
   uint32_t max_recent_datagrams; // buffer of recently decoded datagrams
   uint32_t recent_datagrams_start;
@@ -96,10 +97,12 @@ void nc_free(struct nc *n)
 }
 
 struct nc *nc_new(uint32_t window_size, uint32_t datagram_size, 
-		  uint32_t max_queue_size, uint32_t recent_datagram_count)
+		  uint32_t max_queue_size, uint32_t recent_datagram_count,
+		  uint32_t max_stuck_datagrams)
 {
   // Sanity check inputs
   if (window_size<0||window_size>32) return NULL;
+  if (max_stuck_datagrams<0||max_stuck_datagrams>window_size) return NULL;
   if (datagram_size<0||datagram_size>65536) return NULL;
   // max_queue_size MUST be at least window_size both for the RX algorithm to work,
   // and also to ensure that we allocate the right number of buffers.  Failure
@@ -119,6 +122,7 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
   n->datagram_size=datagram_size;
   n->max_queue_size=max_queue_size;
   n->max_recent_datagrams=recent_datagram_count;
+  n->max_stuck_datagrams=max_stuck_datagrams;
 
   int i;
 
@@ -367,6 +371,38 @@ int nc_reduce_combinations(struct nc *n)
   return 0;
 }
 
+/*
+  I have niggling concerns about how we are acknowledging degrees of freedom.
+  It seems possible to have a non-zero number of acknowledged degrees of freedom
+  for which we cannot (yet) decode the corresponding datagram.
+  Since that number is non-zero, this means that the TX window needs to be narrow
+  enough that we have enough bits on the RX side to commodate the stuck datagrams.
+  However, it seems that the number of stuck datagrams could in fact be unbounded.
+  This is clearly bad.
+  We can fix this, by refusing to acknowledge more than some number of DOFs that
+  have stuck datagrams, i.e., where:
+  1<<(fls(n->linear_combinations[i].n)-1) != n->linear_combinations[i].n
+ */
+uint32_t nc_rx_next_dof(struct nc *n)
+{
+  // Each row that has a higher order bit set than the row below
+  // is a degree of freedom that we have resolved.
+  // Assumes that linear combinations have been reduced as far as
+  // possible, and are sorted in descending order.  Other functions
+  // work to ensure that this is how the structure is left at any point.
+  int i;
+  for(i=0;i<n->queue_size;i++) {
+    if (fls(n->linear_combinations[i].n)!=(32-i)) break;
+    // As described above, put an upper bound on the number of stuck datagrams that
+    // we are willing to acknowledge.  This limits the TX window size to
+    // (32-max_stuck)
+    if ((i>=n->max_stuck_datagrams)&&((1<<(fls(n->linear_combinations[i].n)-1)) 
+		 != n->linear_combinations[i].n))
+      break;
+  }
+  return i+n->window_start;
+}
+
 int nc_rx_record_recent_datagram(struct nc *n,uint32_t datagram_number,
 				 uint8_t *datagram)
 {
@@ -591,13 +627,13 @@ int nc_test()
 {
   struct nc *rx,*tx;
 
-  rx=nc_new(32,200,40,32);
+  rx=nc_new(32,200,40,32,4);
   if (!rx) {
     fprintf(stderr,"FAIL: Failed to create validly defined nc struct for RX.\n");
     fprintf(stderr,"FATAL: Cannot continue tests.\n");
     return -1;
   } else fprintf(stderr,"PASS: Created validly defined nc struct for RX.\n");
-  tx=nc_new(32,200,32,0);
+  tx=nc_new(32,200,32,0,0);
   if (!tx) {
     fprintf(stderr,"FAIL: Failed to create validly defined nc struct for TX.\n");
     fprintf(stderr,"FATAL: Cannot continue tests.\n");
@@ -739,6 +775,11 @@ int nc_test()
       fprintf(stderr,"FAIL: Accept linear combination for RX (code=%d)\n",fail);
       return -1;
     } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
+    nc_test_dump_rx_queue("after rx",rx);
+    if (nc_rx_next_dof(rx)>i+1) 
+      fprintf(stderr,"FAIL: Thinks has acknowledged %d DOFs from just %d combinations.\n",nc_rx_next_dof(rx),i+1);
+    else 
+      fprintf(stderr,"PASS: Has acknowledged %d DOFs (<=%d) from %d combinations.\n",nc_rx_next_dof(rx),i+1,i+1);
   }
 
   // Now try to extract the five datagrams
