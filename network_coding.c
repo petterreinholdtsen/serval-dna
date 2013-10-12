@@ -349,8 +349,21 @@ int nc_reduce_combinations(struct nc *n)
       if (r==-1) return -1; 
       if (r>0) touches++;
     }
-
     nc_test_dump_rx_queue("After reduce",n);
+
+    // Eliminate identicals
+    for(i=0;i<n->queue_size;i++)
+      for(j=i+1;j<n->queue_size;j++) {
+	if (n->linear_combinations[i].n==n->linear_combinations[j].n) {
+	  // Remove duplicate entry
+	  int k;
+	  int freed_buffer=n->linear_combinations[j].buffer_number;
+	  for(k=n->queue_size-1-1;k>=j;k--)
+	    n->linear_combinations[k]=n->linear_combinations[k+1];
+	  n->linear_combinations[n->queue_size-1].buffer_number=freed_buffer;
+	  n->queue_size--;
+	}
+      }
   }
   nc_test_dump_rx_queue("After all reduce",n);
   return 0;
