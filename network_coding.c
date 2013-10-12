@@ -803,6 +803,10 @@ int nc_test()
     else
       fprintf(stderr,"PASS: Stops returning datagrams when none are available.\n");
 
+    if (rx->recent_datagrams_start!=0||rx->recent_datagrams_count!=5)
+      fprintf(stderr,"FAIL: Recent datagram buffers are populated when reading a datagram\n");
+    else 
+    fprintf(stderr,"PASS: Recent datagram buffers are populated when reading a datagram\n");
   }
 
   return 0;
