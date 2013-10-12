@@ -871,7 +871,7 @@ int nc_test()
   // acknowledging as we go along
   {
     int i;
-    int sent=0;
+    int sent=-10; // to cover the 10 packets we are prefilling with
     // Prime TX side with several packets
     for(i=0;i<10;i++) {
       uint8_t rdatagram[200];
@@ -888,25 +888,23 @@ int nc_test()
       {
 	// send datagrams until we can acknowledge a DOF, or there are no DOFs
 	// outstanding
-	while(tx->window_used
-	      &&((nc_rx_next_dof(rx)==tx->window_start)
-		 ||(tx->window_used==tx->window_size))
-	      ) {
-	  uint8_t outbuffer[4+4+200];
-	  int len=4+4+200;
-	  uint32_t written=0;	  
-	  printf("tx->window_start=%08x, rx->window_start=%08x\n",
-		 tx->window_start,rx->window_start);
-	  if (!nc_tx_random_linear_combination(tx,outbuffer,len,&written)) {
-	    nc_rx_linear_combination(rx,outbuffer,written);
-	    sent++;
-	    nc_tx_ack_dof(tx,nc_rx_next_dof(rx));	    
-	    // Read datagrams from RX side to allow rx->window_start to advance
-	    int datagram_number=0;
-	    while((datagram_number
-		   =nc_rx_get_next_datagram(rx,outbuffer,200,&written))>=0) {
-	      printf("Decoded datagram %d of 100 on receiving the %dth combination\n",
-		     datagram_number-5,sent);
+	if (!(random()&3)) {
+	  while(tx->window_used
+		&&((nc_rx_next_dof(rx)==tx->window_start)
+		   ||(tx->window_used==tx->window_size))
+		) {
+	    uint8_t outbuffer[4+4+200];
+	    int len=4+4+200;
+	    uint32_t written=0;	  
+	    if (!nc_tx_random_linear_combination(tx,outbuffer,len,&written)) {
+	      nc_rx_linear_combination(rx,outbuffer,written);
+	      sent++;
+	      nc_tx_ack_dof(tx,nc_rx_next_dof(rx));	    
+	      // Read datagrams from RX side to allow rx->window_start to advance
+	      int datagram_number=0;
+	      while((datagram_number
+		     =nc_rx_get_next_datagram(rx,outbuffer,200,&written))>=0) {
+	      }
 	    }
 	  }
 	}
@@ -917,9 +915,27 @@ int nc_test()
 	rdatagram[0]=i;
 	if (nc_tx_enqueue_datagram(tx,rdatagram,200))
 	  fprintf(stderr,"FAIL: Failed to dispatch datagram %d of 100\n",i);
-	else
-	  fprintf(stderr,"PASS: Dispatched datagram %d of 100\n",i);
       }
+    while(tx->window_used) {
+      uint8_t outbuffer[4+4+200];
+      int len=4+4+200;
+      uint32_t written=0;	  
+      if (!nc_tx_random_linear_combination(tx,outbuffer,len,&written)) {
+	nc_rx_linear_combination(rx,outbuffer,written);
+	sent++;
+	nc_tx_ack_dof(tx,nc_rx_next_dof(rx));	    
+	// Read datagrams from RX side to allow rx->window_start to advance
+	int datagram_number=0;
+	while((datagram_number
+	       =nc_rx_get_next_datagram(rx,outbuffer,200,&written))>=0) {
+	}
+      }
+    }
+
+    if (sent<125)
+      fprintf(stderr,"PASS: Transfers reasonably efficient given lumpy queue (%d combinations to receive 100 datagrams).\n",sent);
+    else
+      fprintf(stderr,"FAIL: Transfers too inefficient (%d combinations to receive 100 datagrams).\n",sent);
   }
 
   return 0;
