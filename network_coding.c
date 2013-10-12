@@ -194,7 +194,7 @@ int nc_tx_ack_dof(struct nc *n,uint32_t latest_dof)
   if (latest_dof>(n->window_start+n->window_size)) return -1;
 
   // Nothing to do if we have already acknowledged this degree of freedom
-  if (latest_dof<n->window_start) return 0;
+  if (latest_dof<=n->window_start) return 0;
 
   // DOF is in window, so shift out all datagrams that preceed the datagram
   // indicated by the DOF
