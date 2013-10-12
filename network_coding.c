@@ -847,7 +847,7 @@ int nc_test()
     fprintf(stderr,"PASS: Recent datagram buffers are populated when reading a datagram\n");
   }
 
-  // Test acknowledging of DOFs
+  // Test that acknowledging ACKs advances the window correctly
   {
     if (nc_rx_next_dof(rx)!=5)
       fprintf(stderr,"FAIL: All DOFs acknowledged after receiving sufficient combinations.\n");
@@ -860,6 +860,10 @@ int nc_test()
       fprintf(stderr,"FAIL: TX DOF acknowledgement advances window_start (is %d, should be 5)\n",tx->window_start);
     else
       fprintf(stderr,"PASS: TX DOF acknowledgement advances window_start\n");
+    if (tx->window_used>0) 
+      fprintf(stderr,"FAIL: TX DOF acknowledgement reduces window_used (is %d, should be 0)\n",tx->window_used);
+    else 
+      fprintf(stderr,"PASS: TX DOF acknowledgement reduces window_used\n");
   }
 
   return 0;
