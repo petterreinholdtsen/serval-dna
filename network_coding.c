@@ -319,9 +319,9 @@ int nc_reduce_linear_combination(uint32_t *combination_bitmap,
   return touches;
 }
 
-int nc_id_and_buffer_comp(void *a,void *b)
+int nc_id_and_buffer_comp(const void *a,const void *b)
 {
-  struct nc_id_and_buffer *aa=a,*bb=b;
+  const struct nc_id_and_buffer *aa=a,*bb=b;
 
   if (aa->n<bb->n) return 1;
   if (bb->n<aa->n) return -1;
@@ -455,6 +455,47 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 
   // Perform general reduction
   return nc_reduce_combinations(n);
+}
+
+int nc_rx_get_next_datagram(struct nc *n,uint8_t *datagram,
+			    uint32_t buffer_size,uint32_t *written)
+{
+  if (!n) return -1;
+  if (!datagram) return -1;
+  if (!written) return -1;
+  if (buffer_size<n->datagram_size) return -1;
+
+  // Check if there is a datagram ready
+  if (n->queue_size<1) return -1;
+  if (n->linear_combinations[0].n!=0x80000000) return -1;
+
+  // There is a decoded datagram: return it, add it to the recent datagram
+  // list, and advance the window.
+
+  // Copy datagram to output
+  bcopy(n->datagram_buffers[n->linear_combinations[0].buffer_number],
+	datagram,n->datagram_size);
+  *written=n->datagram_size;
+
+  // Add to recent datagram list
+  nc_rx_record_recent_datagram(n,n->window_start,datagram);
+
+  // Remove datagram from queue without losing track of buffers
+  if (n->queue_size==1) n->queue_size=0;
+  else {
+    struct nc_id_and_buffer freed=n->linear_combinations[0];
+    n->linear_combinations[0]=n->linear_combinations[n->queue_size-1];
+    n->linear_combinations[n->queue_size-1]=freed;
+    n->queue_size--;
+  }
+
+  // Advance the window, and rotate all the bitmaps accordingly
+  n->window_start++;
+  int i;
+  for(i=0;i<n->queue_size;i++) 
+    n->linear_combinations[i].n=n->linear_combinations[i].n<<1;
+
+  return -1;
 }
 
 #ifdef RUNTESTS
