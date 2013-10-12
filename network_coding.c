@@ -461,8 +461,6 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 
   nc_release_recent_datagrams(n,combination_window_start);
 
-  printf("rx combination = 0x%08x\n",combination_bitmap);
-
   while(combination_window_start<n->window_start) {
     if (combination_bitmap&0x80000000) {
       // TODO: Look through recently decoded datagrams, and reduce from this
@@ -775,7 +773,6 @@ int nc_test()
       fprintf(stderr,"FAIL: Accept linear combination for RX (code=%d)\n",fail);
       return -1;
     } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
-    nc_test_dump_rx_queue("after rx",rx);
     if (nc_rx_next_dof(rx)>i+1) 
       fprintf(stderr,"FAIL: Thinks has acknowledged %d DOFs from just %d combinations.\n",nc_rx_next_dof(rx),i+1);
     else 
