@@ -883,8 +883,8 @@ int nc_test()
     }
     fprintf(stderr,"PASS: Prefilled TX queue for test.\n");
 
-    // Try to send 100 datagrams
-    for(i=0;i<100;i++)
+    // Try to send 10000 datagrams
+    for(i=0;i<10000;i++)
       {
 	// send datagrams until we can acknowledge a DOF, or there are no DOFs
 	// outstanding
@@ -932,10 +932,10 @@ int nc_test()
       }
     }
 
-    if (sent<125)
-      fprintf(stderr,"PASS: Transfers reasonably efficient given lumpy queue (%d combinations to receive 100 datagrams).\n",sent);
+    if (sent<12000)
+      fprintf(stderr,"PASS: Transfers reasonably efficient given lumpy queue (%d combinations to receive 10000 datagrams).\n",sent);
     else
-      fprintf(stderr,"FAIL: Transfers too inefficient (%d combinations to receive 100 datagrams).\n",sent);
+      fprintf(stderr,"FAIL: Transfers too inefficient (%d combinations to receive 10000 datagrams).\n",sent);
   }
 
   return 0;
