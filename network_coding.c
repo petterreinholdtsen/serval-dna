@@ -369,6 +369,13 @@ int nc_reduce_combinations(struct nc *n)
   return 0;
 }
 
+int nc_rx_record_recent_datagram(struct nc *n,uint32_t datagram_number,
+				 uint8_t *datagram)
+{
+  
+  return -1;
+}
+
 int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 {
   if (!n) return -1;
