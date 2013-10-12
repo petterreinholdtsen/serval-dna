@@ -332,7 +332,6 @@ int nc_reduce_combinations(struct nc *n)
 {
   int i,j;
   int touches=1;
-  nc_test_dump_rx_queue("Before reduce",n);
   while(touches>0) {
     touches=0;
     // Sort rows into descending order
@@ -349,7 +348,6 @@ int nc_reduce_combinations(struct nc *n)
       if (r==-1) return -1; 
       if (r>0) touches++;
     }
-    nc_test_dump_rx_queue("After reduce",n);
 
     // Eliminate identicals
     for(i=0;i<n->queue_size;i++)
@@ -365,7 +363,6 @@ int nc_reduce_combinations(struct nc *n)
 	}
       }
   }
-  nc_test_dump_rx_queue("After all reduce",n);
   return 0;
 }
 
@@ -397,7 +394,6 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
   nc_release_recent_datagrams(n,combination_window_start);
 
   printf("rx combination = 0x%08x\n",combination_bitmap);
-  nc_test_dump("combination before any reduce",&combination[8],n->datagram_size);
 
   while(combination_window_start<n->window_start) {
     if (combination_bitmap&0x80000000) {
@@ -445,13 +441,10 @@ int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
 
   assert(combination_window_start==n->window_start);
 
-  nc_test_dump("combination after recent reduce",&combination[8],n->datagram_size);
-
   // Attempt to reduce datagram before inserting.
   // We know that previous calls leave the list sorted in descending order,
   // so we can perform the reduction efficiently.
   nc_reduce_linear_combination(&combination_bitmap,&combination[8],n,0);
-  nc_test_dump("combination after queue reduce",&combination[8],n->datagram_size);
   if (!combination_bitmap) return 1;
 
   // Add to queue
