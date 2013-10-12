@@ -484,7 +484,9 @@ int nc_rx_get_next_datagram(struct nc *n,uint8_t *datagram,
   if (n->queue_size==1) n->queue_size=0;
   else {
     struct nc_id_and_buffer freed=n->linear_combinations[0];
-    n->linear_combinations[0]=n->linear_combinations[n->queue_size-1];
+    int i;
+    for(i=0;i<n->queue_size-1;i++)
+      n->linear_combinations[i]=n->linear_combinations[i+1];
     n->linear_combinations[n->queue_size-1]=freed;
     n->queue_size--;
   }
