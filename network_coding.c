@@ -712,7 +712,7 @@ int nc_test()
   // Now try to extract the five datagrams
   {
     uint8_t datagram[200];
-    uint32_t datagram_number;
+    int datagram_number;
     uint32_t written=0;
     datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
     if (datagram_number!=0)
@@ -724,8 +724,6 @@ int nc_test()
     else
       fprintf(stderr,"PASS: Correctly decode datagram 1 of 5 after reception\n");
 
-    nc_test_dump_rx_queue("after read",rx);
-
     datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
     if (datagram_number!=1)
       fprintf(stderr,"FAIL: Retrieve datagram 2 of 5 after reception of DOFs (returned %d instead of 1)\n",datagram_number);
@@ -735,6 +733,43 @@ int nc_test()
       fprintf(stderr,"FAIL: Correctly decode datagram 2 of 5 after reception\n");
     else
       fprintf(stderr,"PASS: Correctly decode datagram 2 of 5 after reception\n");
+
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number!=2)
+      fprintf(stderr,"FAIL: Retrieve datagram 3 of 5 after reception of DOFs (returned %d instead of 1)\n",datagram_number);
+    else 
+      fprintf(stderr,"PASS: Retrieve datagram 3 of 5 after reception of DOFs\n");
+    if (bcmp(datagram,cdatagram,200))
+      fprintf(stderr,"FAIL: Correctly decode datagram 3 of 5 after reception\n");
+    else
+      fprintf(stderr,"PASS: Correctly decode datagram 3 of 5 after reception\n");
+
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number!=3)
+      fprintf(stderr,"FAIL: Retrieve datagram 4 of 5 after reception of DOFs (returned %d instead of 1)\n",datagram_number);
+    else 
+      fprintf(stderr,"PASS: Retrieve datagram 4 of 5 after reception of DOFs\n");
+    if (bcmp(datagram,ddatagram,200))
+      fprintf(stderr,"FAIL: Correctly decode datagram 4 of 5 after reception\n");
+    else
+      fprintf(stderr,"PASS: Correctly decode datagram 4 of 5 after reception\n");
+
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number!=4)
+      fprintf(stderr,"FAIL: Retrieve datagram 5 of 5 after reception of DOFs (returned %d instead of 1)\n",datagram_number);
+    else 
+      fprintf(stderr,"PASS: Retrieve datagram 5 of 5 after reception of DOFs\n");
+    if (bcmp(datagram,edatagram,200))
+      fprintf(stderr,"FAIL: Correctly decode datagram 5 of 5 after reception\n");
+    else
+      fprintf(stderr,"PASS: Correctly decode datagram 5 of 5 after reception\n");
+
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number>=0)
+      fprintf(stderr,"FAIL: Stops returning datagrams when none are available.\n");
+    else
+      fprintf(stderr,"PASS: Stops returning datagrams when none are available.\n");
+
   }
 
   return 0;
