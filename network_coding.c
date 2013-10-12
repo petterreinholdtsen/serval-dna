@@ -118,6 +118,7 @@ struct nc *nc_new(uint32_t window_size, uint32_t datagram_size,
   n->window_size=window_size;
   n->datagram_size=datagram_size;
   n->max_queue_size=max_queue_size;
+  n->max_recent_datagrams=recent_datagram_count;
 
   int i;
 
@@ -393,7 +394,6 @@ int nc_rx_record_recent_datagram(struct nc *n,uint32_t datagram_number,
     n->recent_datagrams_count=0;
   }
 
-  printf("count=%d, max=%d\n",n->recent_datagrams_count,n->max_recent_datagrams);
   assert(n->recent_datagrams_count<n->max_recent_datagrams);
 
   bcopy(datagram,
