@@ -495,7 +495,8 @@ int nc_rx_get_next_datagram(struct nc *n,uint8_t *datagram,
   for(i=0;i<n->queue_size;i++) 
     n->linear_combinations[i].n=n->linear_combinations[i].n<<1;
 
-  return -1;
+  // return datagram number
+  return n->window_start-1;
 }
 
 #ifdef RUNTESTS
@@ -704,6 +705,34 @@ int nc_test()
       fprintf(stderr,"FAIL: Accept linear combination for RX (code=%d)\n",fail);
       return -1;
     } else fprintf(stderr,"PASS: Accept linear combination for RX\n");
+  }
+
+  // Now try to extract the five datagrams
+  {
+    uint8_t datagram[200];
+    uint32_t datagram_number;
+    uint32_t written=0;
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number!=0)
+      fprintf(stderr,"FAIL: Retrieve datagram 1 of 5 after reception of DOFs\n");
+    else 
+      fprintf(stderr,"PASS: Retrieve datagram 1 of 5 after reception of DOFs\n");
+    if (bcmp(datagram,adatagram,200))
+      fprintf(stderr,"FAIL: Correctly decode datagram 1 of 5 after reception\n");
+    else
+      fprintf(stderr,"PASS: Correctly decode datagram 1 of 5 after reception\n");
+
+    nc_test_dump_rx_queue("after read",rx);
+
+    datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
+    if (datagram_number!=1)
+      fprintf(stderr,"FAIL: Retrieve datagram 2 of 5 after reception of DOFs (returned %d instead of 1)\n",datagram_number);
+    else 
+      fprintf(stderr,"PASS: Retrieve datagram 2 of 5 after reception of DOFs\n");
+    if (bcmp(datagram,bdatagram,200))
+      fprintf(stderr,"FAIL: Correctly decode datagram 2 of 5 after reception\n");
+    else
+      fprintf(stderr,"PASS: Correctly decode datagram 2 of 5 after reception\n");
   }
 
   return 0;
