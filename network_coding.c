@@ -888,7 +888,7 @@ int nc_test()
       {
 	// send datagrams until we can acknowledge a DOF, or there are no DOFs
 	// outstanding
-	if (!(random()&3)) {
+	if (!(i&3)) {
 	  while(tx->window_used
 		&&((nc_rx_next_dof(rx)==tx->window_start)
 		   ||(tx->window_used==tx->window_size))
