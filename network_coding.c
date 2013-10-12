@@ -369,8 +369,40 @@ int nc_reduce_combinations(struct nc *n)
 int nc_rx_record_recent_datagram(struct nc *n,uint32_t datagram_number,
 				 uint8_t *datagram)
 {
-  
-  return -1;
+  if (!n) return -1;
+  if (!datagram) return -1;
+
+  // Expunge old datagrams until the window catches up with the supplied datagram
+  // number.
+  while ((n->recent_datagrams_count>0)
+	 &&(n->recent_datagrams_start+n->max_recent_datagrams<datagram_number)) {
+    uint32_t freed_buffer_number=n->recent_datagram_buffer_numbers[0];
+    int i;
+    for(i=0;i<n->recent_datagrams_count-1;i++) 
+      n->recent_datagram_buffer_numbers[i]=n->recent_datagram_buffer_numbers[i+1];
+    n->recent_datagram_buffer_numbers[n->recent_datagrams_count-1]
+      =freed_buffer_number;
+    n->recent_datagrams_start++;
+    n->recent_datagrams_count--;
+  }
+  // Make sure that at the end of things the window has in fact got to the right
+  // place.  Shouldn't be needed, but best to be defensive in case the recent
+  // datagram window was stale somehow.
+  if (n->recent_datagrams_start+n->max_recent_datagrams<datagram_number) {
+    n->recent_datagrams_start=datagram_number;
+    n->recent_datagrams_count=0;
+  }
+
+  printf("count=%d, max=%d\n",n->recent_datagrams_count,n->max_recent_datagrams);
+  assert(n->recent_datagrams_count<n->max_recent_datagrams);
+
+  bcopy(datagram,
+	n->recent_datagram_buffers
+	[n->recent_datagram_buffer_numbers[n->recent_datagrams_count]],
+	n->datagram_size);
+  n->recent_datagrams_count++;
+
+  return 0;
 }
 
 int nc_rx_linear_combination(struct nc *n,uint8_t *combination,int len)
@@ -764,6 +796,7 @@ int nc_test()
     else
       fprintf(stderr,"PASS: Correctly decode datagram 5 of 5 after reception\n");
 
+    // And make sure that it doesn't keep returning
     datagram_number=nc_rx_get_next_datagram(rx,datagram,200,&written);
     if (datagram_number>=0)
       fprintf(stderr,"FAIL: Stops returning datagrams when none are available.\n");
